@@ -1,7 +1,6 @@
 # QA Automation Portfolio
 
-[![CI](https://github.com/OWNER/REPO/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/REPO/actions/workflows/ci.yml)
-<!-- Replace OWNER/REPO with the GitHub path after pushing. -->
+[![CI](https://github.com/tj-guruvelli/qa-automation-portfolio/actions/workflows/ci.yml/badge.svg)](https://github.com/tj-guruvelli/qa-automation-portfolio/actions/workflows/ci.yml)
 
 Two small, real, runnable UI/API test suites against the public demo app
 [the-internet.herokuapp.com](https://the-internet.herokuapp.com), wired into
@@ -27,6 +26,142 @@ All against `https://the-internet.herokuapp.com` (override with `BASE_URL`):
 
 The login credentials used (`tomsmith` / `SuperSecretPassword!`) are the demo
 app's published test credentials, not secrets.
+
+
+## System overview
+
+```mermaid
+flowchart LR
+    subgraph Dev["Developer"]
+        push["git push / pull request"]
+    end
+    subgraph CI["Continuous integration"]
+        gha["GitHub Actions<br/>ci.yml"]
+        jenkins["Jenkins<br/>Jenkinsfile"]
+    end
+    subgraph Suites["Test suites"]
+        sel["selenium-java<br/>JUnit 5 + Selenium 4<br/>Page Object Model"]
+        pw["playwright-ts<br/>@playwright/test<br/>UI + request API"]
+    end
+    subgraph SUT["System under test"]
+        app["the-internet.herokuapp.com"]
+    end
+    subgraph Out["Evidence"]
+        junit["JUnit XML reports"]
+        shots["Screenshots on failure"]
+        trace["Playwright traces + HTML report"]
+    end
+    push --> gha
+    push --> jenkins
+    gha --> sel
+    gha --> pw
+    jenkins --> sel
+    jenkins --> pw
+    sel -->|Chrome headless| app
+    pw -->|Chromium headless| app
+    pw -->|HTTP request| app
+    sel --> junit
+    sel --> shots
+    pw --> junit
+    pw --> trace
+```
+
+### Layered test architecture
+
+```mermaid
+flowchart TB
+    cfg["Config layer<br/>TestConfig.java / playwright.config.ts<br/>BASE_URL, BROWSER, HEADLESS, retries"]
+    drv["Driver layer<br/>DriverFactory.java (Selenium Manager)<br/>Playwright fixtures (page, request)"]
+    pages["Page layer<br/>BasePage, LoginPage, DropdownPage,<br/>DynamicLoadingPage, StatusCodePage"]
+    tests["Test layer<br/>LoginTest, DropdownTest, DynamicLoadingTest, StatusCodeTest<br/>login.spec, dropdown.spec, dynamic-loading.spec, status-codes.api.spec"]
+    support["Support layer<br/>BaseTest, ScreenshotOnFailure, quarantine tag"]
+    ci["CI layer<br/>GitHub Actions jobs, Jenkins parallel stages"]
+    cfg --> drv --> pages --> tests
+    support --> tests
+    tests --> ci
+```
+
+### A test run, end to end
+
+```mermaid
+sequenceDiagram
+    participant CI as CI runner
+    participant T as Test
+    participant F as DriverFactory
+    participant P as Page object
+    participant B as Browser
+    participant A as App under test
+    CI->>T: run suite (headless)
+    T->>F: create(BROWSER, HEADLESS)
+    F-->>T: WebDriver / Page
+    T->>P: login("tomsmith", "SuperSecretPassword!")
+    P->>B: locate by id / role, explicit wait
+    B->>A: HTTP GET /login, POST /authenticate
+    A-->>B: /secure with success banner
+    B-->>P: element visible
+    P-->>T: result
+    alt assertion passes
+        T-->>CI: JUnit pass
+    else assertion fails
+        T->>B: capture screenshot / trace
+        T-->>CI: JUnit fail + artifact
+    end
+    T->>F: quit()
+```
+
+## Design decisions and consequences
+
+Each decision is recorded as context, decision, and consequences so the trade off is visible to the next maintainer.
+
+### 1. Page Object Model over inline locators
+- **Context.** Five scenarios share the same pages, and locator churn is the most common cause of UI suite breakage.
+- **Decision.** Every page gets one class (`pages/`) that owns its locators and user actions. Tests only call page methods and assert outcomes.
+- **Consequences.** A selector change is a one file fix. Tests read as user intent, not DOM. Cost is more files for a small suite, accepted because the pattern is what scales.
+
+### 2. Explicit waits only, no `Thread.sleep`
+- **Context.** Fixed sleeps either waste CI minutes or flake when the runner is slower than a laptop.
+- **Decision.** Selenium uses `WebDriverWait` with expected conditions. Playwright relies on its built in auto wait and web first assertions.
+- **Consequences.** Suite runtime tracks real page readiness. A genuine slowdown fails with a clear timeout instead of a random assertion error.
+
+### 3. Selenium Manager instead of hand managed drivers
+- **Context.** Driver and browser version drift is a recurring CI failure.
+- **Decision.** Selenium 4 resolves the matching ChromeDriver at runtime. `DriverFactory` only reads `BROWSER` and `HEADLESS`.
+- **Consequences.** No driver binaries in the repo and no version pinning chores. Requires network access to resolve drivers on a cold runner, which is acceptable in CI.
+
+### 4. Role and id based locators, never positional CSS
+- **Context.** `nth-child` and layout coupled selectors break on any CSS refactor.
+- **Decision.** Prefer `getByRole`, `getByLabel`, and stable ids. Positional selectors are rejected in review.
+- **Consequences.** Tests survive styling changes. If the app lacks accessible names, the right fix is to add them to the app, not to the test.
+
+### 5. Both Selenium Java and Playwright TypeScript
+- **Context.** Enterprise estates run Selenium with Java. New web work defaults to Playwright. A QA engineer has to operate in both.
+- **Decision.** Keep the two suites independent with the same scenarios, so either can be dropped or extended without touching the other.
+- **Consequences.** Some duplication across suites, accepted on purpose. Playwright carries the API tests because its `request` fixture needs no browser.
+
+### 6. API checks live beside UI checks
+- **Context.** Business rules in HTTP are cheaper to test than through a browser.
+- **Decision.** Status code behaviour is asserted once through the UI (Selenium) and once at the HTTP layer (Playwright `request`).
+- **Consequences.** Shows the cheapest layer principle in a small repo. New rules should be added at the API layer first and only promoted to UI when composition matters.
+
+### 7. Screenshots and traces on failure, not on every run
+- **Context.** A red test without evidence is an incomplete bug report, but artifacts on every pass bloat CI storage.
+- **Decision.** Selenium captures a screenshot through a JUnit extension only when a test fails. Playwright keeps a trace on first retry.
+- **Consequences.** Failures are diagnosable from the CI artifact alone. Storage stays small.
+
+### 8. One infra retry, then quarantine
+- **Context.** Retrying until green hides product defects and teaches the team to ignore red builds.
+- **Decision.** Playwright retries once in CI only. Tests that fail twice in seven days without a product change are tagged `quarantine`, excluded from the gate, and given an owner and a 14 day expiry (see Flake policy).
+- **Consequences.** The main gate stays trustworthy. Quarantine is a work queue, not a junk drawer, and expired quarantine fails the build.
+
+### 9. Two CI definitions for the same jobs
+- **Context.** The target environment may run GitHub Actions or Jenkins.
+- **Decision.** `ci.yml` and `Jenkinsfile` mirror each other with two parallel jobs, JUnit publishing, and artifact upload.
+- **Consequences.** Portable across CI platforms. Any change to the test command has to be made in both files.
+
+### 10. Public demo app as the system under test
+- **Context.** The portfolio needs a stable target without credentials or infrastructure.
+- **Decision.** Test `the-internet.herokuapp.com` using its published demo credentials. `BASE_URL` overrides the target.
+- **Consequences.** Anyone can clone and run. The suite depends on a third party site being up, so a nightly schedule, not every PR, is the right cadence for the full run in a real project.
 
 ## Architecture
 
@@ -224,6 +359,6 @@ selector.
 ## After cloning / pushing
 
 1. Create a GitHub repository and push `main`.
-2. Replace `OWNER/REPO` in the badge at the top of this file.
+2. The CI badge at the top points at `tj-guruvelli/qa-automation-portfolio`.
 3. In Jenkins, configure JDK 21 as tool `jdk21` and Node 20 as `node20`, then
    create a Multibranch Pipeline pointing at the repo.
