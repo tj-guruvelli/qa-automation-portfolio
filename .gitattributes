@@ -1,0 +1,5 @@
+* text=auto
+selenium-java/mvnw text eol=lf
+selenium-java/mvnw.cmd text eol=crlf
+*.jar binary
+*.png binary

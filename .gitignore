@@ -1,0 +1,21 @@
+# Maven
+selenium-java/target/
+selenium-java/.mvn/wrapper/dists/
+
+# Node / Playwright
+playwright-ts/node_modules/
+playwright-ts/test-results/
+playwright-ts/playwright-report/
+playwright-ts/blob-report/
+playwright-ts/playwright/.cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# Secrets never belong here
+.env
+.env.*

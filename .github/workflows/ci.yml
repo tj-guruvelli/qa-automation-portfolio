@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BASE_URL: https://the-internet.herokuapp.com
+
+jobs:
+  selenium-java:
+    name: Selenium Java (JUnit 5, Chrome headless)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          cache-dependency-path: selenium-java/pom.xml
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Run suite
+        working-directory: selenium-java
+        env:
+          BROWSER: chrome
+          HEADLESS: "true"
+        run: ./mvnw -B -ntp test
+
+      - name: Upload Surefire reports and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selenium-java-reports
+          path: |
+            selenium-java/target/surefire-reports/
+            selenium-java/target/screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  playwright-ts:
+    name: Playwright TypeScript (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: playwright-ts/package-lock.json
+
+      - name: Install dependencies
+        working-directory: playwright-ts
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: playwright-ts
+        run: npx playwright install --with-deps chromium
+
+      - name: Typecheck
+        working-directory: playwright-ts
+        run: npm run typecheck
+
+      - name: Run suite
+        working-directory: playwright-ts
+        env:
+          CI: "true"
+        run: npx playwright test
+
+      - name: Upload Playwright report, traces and JUnit XML
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-ts/playwright-report/
+            playwright-ts/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
