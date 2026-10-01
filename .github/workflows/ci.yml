@@ -37,7 +37,7 @@ jobs:
         env:
           BROWSER: chrome
           HEADLESS: "true"
-        run: ./mvnw -B -ntp test
+        run: chmod +x mvnw && ./mvnw -B -ntp test
 
       - name: Upload Surefire reports and screenshots
         if: always()
