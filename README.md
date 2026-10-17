@@ -301,6 +301,31 @@ Each branch publishes JUnit XML (`junit`) and archives its report directory
 (`archiveArtifacts`). Expects a Linux agent with tools named `jdk21` and
 `node20` configured in Global Tool Configuration and a Chrome binary on `PATH`.
 
+#### Run it on a local Jenkins controller (`jenkins/`)
+
+`jenkins/` holds a reproducible controller so the pipeline is executed, not just
+written. First green run: 2026-10-17, build #1, 59 s, 5 Selenium tests and 6
+Playwright tests passed.
+
+| File | What it does |
+|---|---|
+| `jenkins/Dockerfile` | `jenkins/jenkins:lts-jdk21` plus Chromium (symlinked as `google-chrome` for Selenium Manager), `sudo` for `playwright install --with-deps`, and the plugin set below. Setup wizard disabled. |
+| `jenkins/plugins.txt` | `workflow-aggregator`, `git`, `github`, `nodejs`, `junit`, `timestamper`, `configuration-as-code`, `job-dsl`, `pipeline-stage-view` |
+| `jenkins/jenkins.yaml` | JCasC: admin user from `JENKINS_ADMIN_PASSWORD`, tool `jdk21` pointing at the image JDK, tool `node20` via the NodeJS installer, and a Job DSL script that creates the `qa-automation-portfolio` pipeline job from this repo's `Jenkinsfile`. |
+
+```bash
+cd jenkins
+docker build -t tj-jenkins-qa:lts-jdk21 .
+docker run -d --name tj-jenkins -p 8085:8080 -e JENKINS_ADMIN_PASSWORD=change-me tj-jenkins-qa:lts-jdk21
+# open http://localhost:8085/job/qa-automation-portfolio/ and click Build Now,
+# or trigger over the API with a crumb and the session cookie:
+curl -s -c cj.txt -u admin:change-me http://localhost:8085/crumbIssuer/api/json
+```
+
+Lesson from the first attempt: `options { timestamps() }` is provided by the
+`timestamper` plugin, not core. Without it the Jenkinsfile fails at parse time
+with `Invalid option type "timestamps"`. It is in `plugins.txt` for that reason.
+
 ## Flake policy
 
 A test is **flaky** when it has both passed and failed on the same commit.

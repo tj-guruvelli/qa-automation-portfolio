@@ -1,0 +1,43 @@
+jenkins:
+  systemMessage: "Local Jenkins LTS for qa-automation-portfolio (TJ, 2026-10-17)"
+  numExecutors: 2
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: true
+tool:
+  jdk:
+    installations:
+      - name: "jdk21"
+        home: "/opt/java/openjdk"
+  nodejs:
+    installations:
+      - name: "node20"
+        properties:
+          - installSource:
+              installers:
+                - nodeJSInstaller:
+                    id: "20.18.0"
+                    npmPackagesRefreshHours: 72
+jobs:
+  - script: >
+      pipelineJob('qa-automation-portfolio') {
+        description('Declarative pipeline from the repo Jenkinsfile. Parallel Selenium Java and Playwright TypeScript stages.')
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote { url('https://github.com/tj-guruvelli/qa-automation-portfolio.git') }
+                branch('*/main')
+              }
+            }
+            scriptPath('Jenkinsfile')
+            lightweight(true)
+          }
+        }
+      }
